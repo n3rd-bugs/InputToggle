@@ -85,7 +85,7 @@ MUTEX_NAME = "Local\\InputToggle"
 WND_CLASS = "InputToggleWndCls"
 WND_TITLE = "InputToggle"
 TASK_NAME = "\\InputToggle\\Apply"
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 HELPER_LOG_HINT = r"C:\Program Files\InputToggle\logs\helper.log"
 CRD_PROCESS = "remoting_desktop.exe"
 

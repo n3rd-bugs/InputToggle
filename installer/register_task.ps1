@@ -20,12 +20,18 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$InstallDir = $PSScriptRoot,
+    # Default: the folder of this script. Not "= $PSScriptRoot" here: in an
+    # advanced script ([CmdletBinding()]) Windows PowerShell 5.1 leaves
+    # $PSScriptRoot empty in parameter defaults when the script is started
+    # with -File, which is how the installer runs it.
+    [string]$InstallDir = '',
     [string]$TaskPath   = '\InputToggle\',
     [string]$TaskName   = 'Apply'
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $InstallDir) { $InstallDir = $PSScriptRoot }
+if (-not $InstallDir) { $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
 $logDir = Join-Path $InstallDir 'logs'
 $logFile = Join-Path $logDir 'setup.log'

@@ -1174,6 +1174,38 @@ class RepositoryContractTests(unittest.TestCase):
         with open(os.path.join(ROOT, *parts), "r", encoding="utf-8") as fh:
             return fh.read()
 
+    def test_no_psscriptroot_in_parameter_defaults(self):
+        # Windows PowerShell 5.1 leaves $PSScriptRoot empty in the param()
+        # defaults of an advanced script started with -File (1.2.0 shipped
+        # that bug: the installer could not register the task).
+        for rel in (("installer", "register_task.ps1"), ("installer", "unregister_task.ps1"),
+                    ("build.ps1",)):
+            text = self.read(*rel)
+            m = re.search(r"(?ims)^\s*param\s*\((.*?)^\s*\)\s*$", text)
+            self.assertIsNotNone(m, "no param() block in %s" % "/".join(rel))
+            code = "\n".join(ln.split("#", 1)[0] for ln in m.group(1).splitlines())
+            self.assertNotIn("$PSScriptRoot", code,
+                             "%s uses $PSScriptRoot in a parameter default" % "/".join(rel))
+
+    @unittest.skipUnless(sys.platform == "win32", "needs Windows PowerShell")
+    def test_register_script_starts_under_windows_powershell(self):
+        # Run it the way the installer does. Unelevated it must stop at its
+        # elevation check (exit 3); elevated (a CI runner) at its own checks.
+        # Either way its own code must run: no parameter-binding error.
+        import subprocess
+        ps = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"),
+                          "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        script = os.path.join(ROOT, "installer", "register_task.ps1")
+        p = subprocess.run([ps, "-NoLogo", "-NoProfile", "-NonInteractive",
+                            "-ExecutionPolicy", "Bypass", "-File", script],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=120,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = p.stdout.decode("utf-8", "replace")
+        self.assertNotIn("Cannot bind argument", out)
+        self.assertIn("register:", out)
+        self.assertNotEqual(p.returncode, 0, out)
+
     def test_installer_can_stop_any_version(self):
         iss = self.read("installer", "InputToggle.iss")
         self.assertEqual(it.WND_CLASS, "InputToggleWndCls")

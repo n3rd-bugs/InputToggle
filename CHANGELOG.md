@@ -3,6 +3,19 @@
 All notable changes to InputToggle are listed here. Versions follow
 [semantic versioning](https://semver.org/).
 
+## [1.2.1] - 2026-10-18
+
+### Fixed
+
+- Setup could not register the helper task, so a new installation reported
+  "helper not installed". Windows PowerShell 5.1 leaves `$PSScriptRoot` empty
+  in the parameter defaults of an advanced script started with `-File`, and
+  `register_task.ps1` used it to find the install folder. Upgrades over an
+  existing task kept working with the old task settings; installing 1.2.1
+  registers the task again.
+- Tests now run `register_task.ps1` under Windows PowerShell the way Setup
+  does, and reject `$PSScriptRoot` in parameter defaults.
+
 ## [1.2.0] - 2026-10-18
 
 First public release.

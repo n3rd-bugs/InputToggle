@@ -26,7 +26,7 @@ device back, so you cannot lock yourself out for good.
 2. Optional: check it against `SHA256SUMS.txt` from the same release:
 
    ```powershell
-   Get-FileHash .\InputToggle-Setup-1.2.0.exe -Algorithm SHA256
+   Get-FileHash .\InputToggle-Setup-1.2.1.exe -Algorithm SHA256
    ```
 
 3. Run it from the Windows account that will use InputToggle. That account
