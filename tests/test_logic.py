@@ -854,6 +854,41 @@ class ControllerTests(unittest.TestCase):
         finally:
             it.toggle_core, it.enable_core = orig_t, orig_e
 
+    def test_crd_auto_mode_waits_for_the_startup_reenable(self):
+        # 1.2.1: with a CRD session already open when InputToggle started,
+        # auto mode switched the devices off and "Re-enable at startup"
+        # switched them back on a second later.
+        c = bare_controller()
+        c.settings["auto_disable_crd"] = True
+        events = []
+        orig_find = it.find_process_pids
+        it.find_process_pids = lambda name: {4242}       # a session is open
+        c._auto_op = lambda fn: events.append("crd") or None
+        t = threading.Thread(target=c._crd_loop, daemon=True)
+        try:
+            t.start()
+            time.sleep(0.8)
+            self.assertEqual(events, [], "auto mode acted before the startup work ended")
+            events.append("startup done")
+            c._startup_done.set()
+            self.assertTrue(_wait_for(lambda: "crd" in events, timeout=5.0))
+            self.assertEqual(events[:2], ["startup done", "crd"])
+        finally:
+            c._stop.set()
+            t.join(5)
+            it.find_process_pids = orig_find
+
+    def test_startup_worker_always_opens_the_gate(self):
+        c = bare_controller()
+        c._startup_work = lambda: 1 / 0                   # the startup work fails
+        with self.assertRaises(ZeroDivisionError):
+            c._startup_worker()
+        self.assertTrue(c._startup_done.is_set())
+        c2 = bare_controller()
+        c2.start_worker = lambda fn, name="w", daemon=True: None
+        c2.on_win32_ready()                               # the worker could not start
+        self.assertTrue(c2._startup_done.is_set())
+
     def test_end_session_is_bounded_when_an_operation_holds_the_lock(self):
         c = bare_controller()
         orig = it.enable_all_core

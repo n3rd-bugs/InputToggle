@@ -3,6 +3,16 @@
 All notable changes to InputToggle are listed here. Versions follow
 [semantic versioning](https://semver.org/).
 
+## [1.2.2] - 2026-10-18
+
+### Fixed
+
+- Auto mode for Chrome Remote Desktop no longer loses to "Re-enable at
+  startup". When InputToggle started while a session was already open (for
+  example after signing in through Chrome Remote Desktop), auto mode switched
+  the devices off and the startup re-enable switched them back on a second
+  later. Auto mode now waits until the startup work has finished.
+
 ## [1.2.1] - 2026-10-18
 
 ### Fixed

@@ -85,9 +85,12 @@ MUTEX_NAME = "Local\\InputToggle"
 WND_CLASS = "InputToggleWndCls"
 WND_TITLE = "InputToggle"
 TASK_NAME = "\\InputToggle\\Apply"
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 HELPER_LOG_HINT = r"C:\Program Files\InputToggle\logs\helper.log"
 CRD_PROCESS = "remoting_desktop.exe"
+# Auto mode waits (at most this long) for the startup re-enable to finish, so
+# that re-enable cannot undo the switch-off for a session that is already open.
+STARTUP_GATE_S = 60.0
 
 # True when running as the PyInstaller-built InputToggle.exe.
 FROZEN = bool(getattr(sys, "frozen", False))
@@ -3167,6 +3170,7 @@ class Controller(object):
         self._crd = CrdTracker(end_after=3)
         self._crd_active = False
         self._crd_manual_override = False
+        self._startup_done = threading.Event()    # set when the startup work ended
         self._shutting_down = False
         self._finished = False
         self._ended_session = False
@@ -3341,8 +3345,15 @@ class Controller(object):
         """Called on the win32 thread once the window, tray and hotkey exist."""
         if self.start_worker(self._startup_worker, "startup") is None:
             log().error("could not start the startup worker")
+            self._startup_done.set()
 
     def _startup_worker(self):
+        try:
+            self._startup_work()
+        finally:
+            self._startup_done.set()
+
+    def _startup_work(self):
         if self._stop.wait(1.0):
             return
         notes = []
@@ -3638,6 +3649,13 @@ class Controller(object):
 
     # ---- CRD auto-disable ---------------------------------------------
     def _crd_loop(self):
+        # Let "Re-enable at startup" finish first: otherwise it re-enables, a
+        # moment later, what auto mode switched off for a session that was
+        # already open when InputToggle started (e.g. signing in through CRD).
+        deadline = time.monotonic() + STARTUP_GATE_S
+        while (not self._startup_done.is_set() and not self._stop.is_set()
+               and time.monotonic() < deadline):
+            self._startup_done.wait(0.5)
         while not self._stop.is_set():
             try:
                 if self.settings.get("auto_disable_crd"):
