@@ -1,0 +1,24 @@
+# build.ps1 output
+/.venv-build/
+/build/
+/dist/
+
+# test scratch folders
+/_testtmp/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# PyInstaller spec files (build.ps1 generates them under build\)
+*.spec
+
+# editors and Windows
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# crash dumps from Git for Windows tools, and stray redirections to "nul"
+*.stackdump
+/nul

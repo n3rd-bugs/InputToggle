@@ -1,0 +1,145 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# least privilege: only the release job may write (it creates the release)
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build and test (Windows)
+    # Windows Server 2025 image: the .NET Framework 4.8.x C# compiler and
+    # Python 3.11.9 in its tool cache; Inno Setup is pinned below
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11 (x64)
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # 3.11.9 is the last 3.11 release with Windows installers
+          python-version: '3.11.9'
+          architecture: x64
+
+      - name: Check that the tag matches the app version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $m = Select-String -LiteralPath src/inputtoggle.pyw -Pattern '^VERSION\s*=\s*"(\d+\.\d+\.\d+)"\s*$' | Select-Object -First 1
+          if (-not $m) { throw 'VERSION = "x.y.z" not found in src/inputtoggle.pyw' }
+          $version = $m.Matches[0].Groups[1].Value
+          if ($env:TAG -ne "v$version") {
+            throw "Tag $env:TAG does not match the app version $version (expected tag v$version)."
+          }
+          Write-Host "Tag $env:TAG matches the app version $version."
+
+      - name: Inno Setup 6.7.1 (pinned)
+        env:
+          INNO_VERSION: '6.7.1'
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'
+          $ver = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).DisplayVersion
+          if ($ver -ne $env:INNO_VERSION) {
+            Write-Host "Inno Setup on the image: '$ver'; installing $env:INNO_VERSION with Chocolatey"
+            choco install innosetup --version=$env:INNO_VERSION --allow-downgrade --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup $env:INNO_VERSION failed ($LASTEXITCODE)" }
+            $ver = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).DisplayVersion
+          }
+          if ($ver -ne $env:INNO_VERSION) { throw "Inno Setup $env:INNO_VERSION is required, found '$ver'" }
+          $path = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $path)) { throw "ISCC.exe not found ($path)" }
+          Write-Host "ISCC: $path (Inno Setup $ver)"
+          "ISCC=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "INNO_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build (unit tests, app, helper, frozen checks, installer, checksums)
+        # Windows PowerShell 5.1, the engine the README's local build uses
+        shell: powershell
+        env:
+          PYTHON_EXE: ${{ steps.python.outputs.python-path }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $expect = ''
+          if ($env:REF_TYPE -eq 'tag') { $expect = $env:REF_NAME }
+          ./build.ps1 -Python $env:PYTHON_EXE -Iscc $env:ISCC -ExpectVersion $expect -ExpectInnoVersion $env:INNO_VERSION
+
+      - name: Upload dist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true          # a re-run of the job replaces it
+
+  release:
+    name: Publish the GitHub release
+    needs: build
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out (for the changelog)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download dist
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Verify the checksums
+        working-directory: dist
+        run: |
+          ls -l
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then echo "See CHANGELOG.md." > release-notes.md; fi
+          printf '\nVerify the download with SHA256SUMS.txt (sha256sum -c, or Get-FileHash in PowerShell).\n' >> release-notes.md
+          cat release-notes.md
+
+      - name: Create the release (or update its files on a re-run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+              --title "InputToggle ${TAG#v}" --notes-file release-notes.md --verify-tag
+          fi
